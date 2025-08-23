@@ -55,8 +55,6 @@ int main()
     recv(clientSocket, buffer, sizeof(buffer), 0);
     std::cout << buffer << std::endl;
 
-    // UP TO HERE, THE CODE IS AS INTENDED
-
     // thread 1
     pthread_t msg_out;
     pthread_create(&msg_out, NULL, send_message, (void*) a);

@@ -108,8 +108,8 @@ void* process_inputs(void* args)
         buffer[msg_size] = '\0';
 
         ///for tests of the information that arrives
-        std::cout << buffer << std::endl;
-        std::cout << "username: " << a->username << std::endl; // test of username
+        //std::cout << buffer << std::endl;
+        //std::cout << "username: " << a->username << std::endl; // test of username
 
         memcpy(m->text, buffer, sizeof(m->text));
         (*a->comm).push_back(*m);
