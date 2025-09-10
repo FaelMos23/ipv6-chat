@@ -33,7 +33,7 @@ uint8_t available(bool*);
 int main()
 {
     // variables
-    std::vector<message> commands;
+    std::vector<message> commands[3];
     bool loopON[3] = {false, false, false};
     uint8_t available_entry;
     char conf_msg[33] = "CONNECTION ESTABLISHED, WELCOME ";
@@ -112,7 +112,7 @@ int main()
 
             a[available_entry]->clientSocket = clientSocket[available_entry];
             a[available_entry]->loopON = &(loopON[available_entry]);
-            a[available_entry]->comm = &commands;
+            a[available_entry]->comm = &(commands[0]);
             a[available_entry]->userID = 0;
             a[available_entry]->username = username[available_entry]; // array of chars
             a[available_entry]->clientIP = clientIP[available_entry];
@@ -158,7 +158,7 @@ void *process_inputs(void *args)
     char buffer[256] = {0};
     message *m = (message *)malloc(sizeof(Message));
     m->userID = a->userID;
-    int msg_size;
+    int msg_size, i;
 
     while (*a->loopON)
     {
@@ -170,7 +170,8 @@ void *process_inputs(void *args)
         // std::cout << "username: " << a->username << std::endl; // test of username
 
         memcpy(m->text, buffer, sizeof(m->text));
-        (*a->comm).push_back(*m);
+        for(i=0; i<3; i++)
+            (*(a->comm+i)).push_back(*m);
     }
 
     return (void *)a;
