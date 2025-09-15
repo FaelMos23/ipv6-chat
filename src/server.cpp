@@ -1,4 +1,5 @@
 #include <cstring>
+#include <cstdint>
 #include <iostream>
 #include <netinet/in.h> // sockaddr_in, htons, htonl
 #include <sys/socket.h> // socket, connect, bind, listen, accept
@@ -8,7 +9,6 @@
 #include <string.h>
 #include <ctime>
 #include <vector>
-#include <string>
 
 typedef struct Message
 {
@@ -28,12 +28,26 @@ typedef struct Arguments
 
 void *process_inputs(void *);
 void *send_results(void *);
+uint8_t available(bool*);
 
 int main()
 {
     // variables
-    std::vector<message> commands;
-    bool loopON = true;
+    std::vector<message> commands[3];
+    bool loopON[3] = {false, false, false};
+    uint8_t available_entry;
+    char conf_msg[33] = "CONNECTION ESTABLISHED, WELCOME ";
+
+    sockaddr_in clientAddress[3];
+    socklen_t clientAddressLen;
+    ssize_t count;
+    char username[3][40];
+    int clientSocket[3];
+    char clientIP[3][INET_ADDRSTRLEN];
+
+    arg *a[3];
+    pthread_t socket2proc[3];
+    pthread_t proc2client[3];
 
     // creating socket
     int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
@@ -47,62 +61,93 @@ int main()
     // binding socket.
     bind(serverSocket, (struct sockaddr *)&serverAddress, sizeof(serverAddress));
 
-    // listening to the assigned socket
-    listen(serverSocket, 5);
 
-    // accepting connection request and saving client information
-    sockaddr_in clientAddress;
-    socklen_t clientAddressLen = sizeof(clientAddress);
-    int clientSocket = accept(serverSocket, (struct sockaddr *)&clientAddress, &clientAddressLen);
 
-    char clientIP[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &clientAddress.sin_addr, clientIP, INET_ADDRSTRLEN);
-    // int clientPort = ntohs(clientAddress.sin_port);  // port used by client
-    // TODO: prepare for empty username -> save IP
 
-    // saving username
-    char username[40]; // should be expanded to an array later
-    ssize_t count = recv(clientSocket, username, sizeof(username) - 1, 0);
-    if (count > 0)
+
+    while(true)
     {
-        if (username[0] == '\n') // we are using this as a control character as the client can't type this as a username
-            strcpy(username, clientIP);
-        else
-            username[count] = '\0';
+        // if there is a space available, listen for more connections
+        available_entry = available(loopON);    // returns an entry if available, returns 255 if none is available
+        
+        if(available_entry == 255)
+        {
+            sched_yield();
+        }
+        else 
+        {
+
+            // listening to the assigned socket
+            listen(serverSocket, 5);
+
+            // accepting connection request and saving client information
+            clientAddressLen = sizeof(clientAddress[available_entry]);
+            clientSocket[available_entry] = accept(serverSocket, (struct sockaddr *) &(clientAddress[available_entry]), &clientAddressLen);
+
+            inet_ntop(AF_INET, &((clientAddress[available_entry]).sin_addr), clientIP[available_entry], INET_ADDRSTRLEN);
+            // int clientPort = ntohs((clientAddress[available_entry]).sin_port);  // port used by client
+            // TODO: prepare for empty username -> save IP
+
+            // saving username
+            count = recv(clientSocket[available_entry], username[available_entry], sizeof(username[0]) - 1, 0);
+            if (count > 0)
+            {
+                if (username[available_entry][0] == '\n') // we are using this as a control character as the client can't type this as a username
+                    strcpy(username[available_entry], clientIP[available_entry]);
+                else
+                    username[available_entry][count] = '\0';
+            }
+            else
+            {
+                std::cerr << "Empty username\n";
+            }
+
+            // start the loop for the thread
+            loopON[available_entry] = true;
+
+            // arguments for threads
+            a[available_entry] = (arg *)malloc(sizeof(arg));
+            if(a[available_entry] == NULL)
+                std::cerr << "Error on argument\n";
+
+            a[available_entry]->clientSocket = clientSocket[available_entry];
+            a[available_entry]->loopON = &(loopON[available_entry]);
+            a[available_entry]->comm = &(commands[0]);
+            a[available_entry]->userID = 0;
+            a[available_entry]->username = username[available_entry]; // array of chars
+            a[available_entry]->clientIP = clientIP[available_entry];
+
+            // confirmation message
+            char send_conf_msg[73];
+            strcpy(send_conf_msg, conf_msg);
+            strcat(send_conf_msg, username[available_entry]); // adds the username
+            send(clientSocket[available_entry], send_conf_msg, sizeof(send_conf_msg), 0);
+
+            // thread that reads from socket and processes
+            pthread_create(&(socket2proc[available_entry]), NULL, process_inputs, (void *)a[available_entry]);
+
+            // thread that sends the result to the client
+            pthread_create(&(proc2client[available_entry]), NULL, send_results, (void *)a[available_entry]);
+
+        }
     }
-    else
-    {
-        std::cerr << "Empty username\n";
-    }
 
-    // arguments for threads
-    arg *a = (arg *)malloc(sizeof(arg));
-    a->clientSocket = clientSocket;
-    a->loopON = &loopON;
-    a->comm = &commands;
-    a->userID = 0;
-    a->username = username; // array of chars
-    a->clientIP = clientIP;
+    free(a[0]);
+    free(a[1]);
+    free(a[2]);
 
-    // confirmation message
-    std::string conf_msg = "CONNECTION ESTABLISHED, WELCOME ";
-    conf_msg += username; // adds the username
-    send(clientSocket, conf_msg.c_str(), conf_msg.size(), 0);
-
-    // thread that reads from socket and processes
-    pthread_t socket2proc;
-    pthread_create(&socket2proc, NULL, process_inputs, (void *)a);
-
-    // thread that sends the result to the client
-    pthread_t proc2client;
-    pthread_create(&proc2client, NULL, send_results, (void *)a);
-
-    pthread_join(socket2proc, NULL);
-    pthread_join(proc2client, NULL);
+    pthread_join(socket2proc[0], NULL);
+    pthread_join(proc2client[0], NULL);
+    pthread_join(socket2proc[1], NULL);
+    pthread_join(proc2client[1], NULL);
+    pthread_join(socket2proc[2], NULL);
+    pthread_join(proc2client[2], NULL);
 
     // closing the socket.
     close(serverSocket);
-    close(clientSocket);
+    close(clientSocket[0]);
+    close(clientSocket[1]);
+    close(clientSocket[2]);
 
     return 0;
 }
@@ -113,7 +158,7 @@ void *process_inputs(void *args)
     char buffer[256] = {0};
     message *m = (message *)malloc(sizeof(Message));
     m->userID = a->userID;
-    int msg_size;
+    int msg_size, i;
 
     while (*a->loopON)
     {
@@ -125,7 +170,8 @@ void *process_inputs(void *args)
         // std::cout << "username: " << a->username << std::endl; // test of username
 
         memcpy(m->text, buffer, sizeof(m->text));
-        (*a->comm).push_back(*m);
+        for(i=0; i<3; i++)
+            (*(a->comm+i)).push_back(*m);
     }
 
     return (void *)a;
@@ -193,4 +239,18 @@ void *send_results(void *args)
     }
 
     return (void *)a;
+}
+
+uint8_t available(bool* loopON)
+{
+    if(!loopON[0])
+        return 0;
+
+    if(!loopON[1])
+        return 1;
+    
+    if(!loopON[2])
+        return 2;
+
+    return 255;
 }
