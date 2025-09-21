@@ -23,7 +23,7 @@ typedef struct Arguments
     std::vector<message> *comm;
     int userID;
     char *username;
-    char *clientIP;
+    char *clientIPport;
     int num_users;
 } arg;
 
@@ -59,7 +59,7 @@ int main(int argc, char* argv[])
     ssize_t count;
     char username[NUM_USERS][40];
     int clientSocket[NUM_USERS];
-    char clientIP[NUM_USERS][INET_ADDRSTRLEN];
+    char clientIPport[NUM_USERS][INET_ADDRSTRLEN+10];   // 10 extra characters to add the port
 
     arg *a[NUM_USERS];
     for(i=0; i<NUM_USERS; i++)
@@ -118,7 +118,7 @@ int main(int argc, char* argv[])
         else 
         {
             memcpy(&(clientSocket[available_entry]), &tempAccept, sizeof(tempAccept));
-            memcpy(&(clientAddress[available_entry]), &tempAddr, sizeof(tempAccept));
+            memcpy(&(clientAddress[available_entry]), &tempAddr, sizeof(tempAddr));
 
             // accepting connection request and saving client information
             while (clientSocket[available_entry] < 0 && errno == EINTR)
@@ -131,14 +131,20 @@ int main(int argc, char* argv[])
             }
 
             // get IP from client
-            inet_ntop(AF_INET, &((clientAddress[available_entry]).sin_addr), clientIP[available_entry], INET_ADDRSTRLEN);
+            inet_ntop(AF_INET, &((clientAddress[available_entry]).sin_addr), clientIPport[available_entry], INET_ADDRSTRLEN);
+            int clientPort = ntohs((clientAddress[available_entry]).sin_port);  // port used by client
+
+            // adding port to IP
+            char portString[10];
+            snprintf(portString, sizeof(portString), ":%d", clientPort);
+            strcat(clientIPport[available_entry], portString);
 
             // saving username
             count = recv(clientSocket[available_entry], username[available_entry], sizeof(username[0]) - 1, 0);
             if (count > 0)
             {
                 if (username[available_entry][0] == '\n') // we are using this as a control character as the client can't type this as a username
-                    strcpy(username[available_entry], clientIP[available_entry]);
+                    strcpy(username[available_entry], clientIPport[available_entry]);
                 else
                     username[available_entry][count] = '\0';
             }
@@ -169,7 +175,7 @@ int main(int argc, char* argv[])
             a[available_entry]->comm = &(commands[0]);  // passing the first because you need access to all of them
             a[available_entry]->userID = available_entry;
             a[available_entry]->username = &(username[0][0]); // array of chars /// need access to all of them
-            a[available_entry]->clientIP = clientIP[available_entry];
+            a[available_entry]->clientIPport = clientIPport[available_entry];
             a[available_entry]->num_users = NUM_USERS;
 
             // confirmation message
@@ -265,18 +271,22 @@ void *send_results(void *args)
     message comm;
     std::vector<message> * pComm = a->comm+(a->userID);
     bool* localLoopON = a->loopON+(a->userID);
+    bool hasTime;
 
 
     while (*localLoopON)
     {
         sleep(1);
+        hasTime = false;
 
-        // should we add the time?
+        // TODO: CHANGE TO 60
         if (count++ % 60 == 0)  // NUMBER OF SECONDS
         {
             timestamp = time(NULL);
             datetime = *localtime(&timestamp);
             strftime(msg, sizeof(msg), "<%H:%M:%S> ", &datetime);
+
+            hasTime = true;
         }
 
         // add the message
@@ -287,11 +297,27 @@ void *send_results(void *args)
 
             if (comm.userID == a->userID)
             {
-                strcat(msg, "[You]: ");
+                strcat(msg, "You typed: ");
             }
             else
             {
-                snprintf(msg, sizeof(msg), "[%s]: ", &(a->username[40*comm.userID])); // getting other usernames
+                if(hasTime)
+                {
+                    //snprintf(msg, strlen(msg), "[%s]: ", &(a->username[40*comm.userID])); // getting other usernames
+                    strcat(msg, "[");
+                    strcat(msg, &(a->username[40*comm.userID]));
+                    strcat(msg, "]: ");
+                }
+                else
+                {
+                    char addTime[64];
+                    timestamp = time(NULL);
+                    datetime = *localtime(&timestamp);
+                    strftime(addTime, sizeof(msg), "(%H:%M:%S)", &datetime);
+
+
+                    snprintf(msg, sizeof(msg), "[%s]%s: ", &(a->username[40*comm.userID]), addTime);
+                }
             }
 
             strcat(msg, comm.text);
@@ -301,19 +327,40 @@ void *send_results(void *args)
         // and process commands
         if (msg[0] != '\0')
         {
-            if (!strcmp(comm.text, ":quit") && comm.userID == a->userID)
-                (*localLoopON) = false;
+            if (!strcmp(comm.text, ":quit"))
+            {
+                if(comm.userID == a->userID)
+                {
+                    (*localLoopON) = false;
+                }
+                else
+                {
+                    snprintf(msg, sizeof(msg), "%s disconnected.", &(a->username[40*comm.userID]));
+                }
+            }
             else
             {
-                if (!strncmp(comm.text, ":name", 5) && comm.userID == a->userID)
+                if (!strncmp(comm.text, ":name", 5))
                 {
-                    char *token = strtok(comm.text, " ");
-                    token = strtok(NULL, " \n\0"); // get the name
+                    char oldname[40];
+                    memcpy(oldname, &(a->username[40*comm.userID]), 40);
 
-                    if (token != NULL)
-                        memcpy(&(a->username[40*comm.userID]), token, 40); // name is not empty
+                    if(comm.userID == a->userID)
+                    {
+                        char *token = strtok(comm.text, " ");
+                        token = strtok(NULL, " \n\0"); // get the name
+
+                        if (token != NULL)
+                            memcpy(&(a->username[40*comm.userID]), token, 40); // name is not empty
+                        else
+                            strcpy(&(a->username[40*comm.userID]), a->clientIPport); // name is empty, use IP
+
+                        snprintf(msg, sizeof(msg), "Username changed: %s -> %s", oldname, &(a->username[40*comm.userID]));
+                    }
                     else
-                        strcpy(&(a->username[40*comm.userID]), a->clientIP); // name is empty, use IP
+                    {
+                        snprintf(msg, sizeof(msg), "%s changed their username.", oldname);
+                    }
                 }
             }
 
