@@ -85,6 +85,8 @@ int main(int argc, char* argv[])
     pthread_join(msg_in, NULL);
     pthread_join(msg_out, NULL);
 
+    free(a);
+
     // closing socket
     close(clientSocket);
 

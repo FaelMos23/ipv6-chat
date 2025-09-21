@@ -17,7 +17,7 @@ typedef struct Message
 } message;
 
 typedef struct Arguments
-{ // add username list
+{
     int clientSocket;
     bool *loopON;
     std::vector<message> *comm;
@@ -55,7 +55,7 @@ int main(int argc, char* argv[])
     char conf_msg[33] = "CONNECTION ESTABLISHED, WELCOME ";
 
     sockaddr_in clientAddress[NUM_USERS];
-    socklen_t clientAddressLen = sizeof(clientAddress[0]);
+    socklen_t addressLen = sizeof(clientAddress[0]);
     ssize_t count;
     char username[NUM_USERS][40];
     int clientSocket[NUM_USERS];
@@ -87,7 +87,7 @@ int main(int argc, char* argv[])
     if(bind_result < 0)
     {
         perror("Bind error");
-        return 2;
+        return 1;
     }
 
     // listening to the assigned socket
@@ -100,31 +100,38 @@ int main(int argc, char* argv[])
 
     while(true)
     {
+        sockaddr_in tempAddr;
+        int tempAccept = accept(serverSocket, (struct sockaddr *) &(tempAddr), &addressLen);
+
+
         // if there is a space available, listen for more connections
         available_entry = available(loopON, NUM_USERS);    // returns an entry if available, returns 255 if none is available
-        
+
         if(available_entry == 255)
         {
-            clientAddressLen = sizeof(clientAddress[0]);
-            ssize_t rejected = accept(serverSocket, (struct sockaddr *) &(clientAddress[available_entry]), &clientAddressLen);
+            
             const char full_msg[44] = "\n\nWe have a full server, try again later.\n\n";
-            send(rejected, full_msg, strlen(full_msg), 0);
-            close(rejected);
+            send(tempAccept, full_msg, strlen(full_msg), 0);
+            close(tempAccept);
             continue;
         }
         else 
         {
+            memcpy(&(clientSocket[available_entry]), &tempAccept, sizeof(tempAccept));
+            memcpy(&(clientAddress[available_entry]), &tempAddr, sizeof(tempAccept));
+
             // accepting connection request and saving client information
-            do {
-                clientSocket[available_entry] = accept(serverSocket, (struct sockaddr *) &(clientAddress[available_entry]), &clientAddressLen);
-            } while (clientSocket[available_entry] < 0 && errno == EINTR);
+            while (clientSocket[available_entry] < 0 && errno == EINTR)
+            {
+                clientSocket[available_entry] = accept(serverSocket, (struct sockaddr *) &(clientAddress[available_entry]), &addressLen);
+            }
             if (clientSocket[available_entry] < 0) {
-                perror("accept");
+                perror("Accept error");
                 continue;
             }
 
+            // get IP from client
             inet_ntop(AF_INET, &((clientAddress[available_entry]).sin_addr), clientIP[available_entry], INET_ADDRSTRLEN);
-            // int clientPort = ntohs((clientAddress[available_entry]).sin_port);  // port used by client
 
             // saving username
             count = recv(clientSocket[available_entry], username[available_entry], sizeof(username[0]) - 1, 0);
@@ -186,22 +193,18 @@ int main(int argc, char* argv[])
         }
     }
 
-    free(a[0]);
-    free(a[1]);
-    free(a[2]);
+    for(i=0; i<NUM_USERS; i++)
+    {
+        free(a[i]);
+        pthread_join(socket2proc[i], NULL);
+        pthread_join(proc2client[i], NULL);
 
-    pthread_join(socket2proc[0], NULL);
-    pthread_join(proc2client[0], NULL);
-    pthread_join(socket2proc[1], NULL);
-    pthread_join(proc2client[1], NULL);
-    pthread_join(socket2proc[2], NULL);
-    pthread_join(proc2client[2], NULL);
+        // closing the socket.
+        close(clientSocket[i]);
+    }
 
     // closing the socket.
     close(serverSocket);
-    close(clientSocket[0]);
-    close(clientSocket[1]);
-    close(clientSocket[2]);
 
     return 0;
 }
@@ -224,8 +227,7 @@ void *process_inputs(void *args)
             buffer[msg_size] = '\0';
 
             /// for tests of the information that arrives
-            // std::cout << buffer << std::endl;
-            std::cout << buffer << " by username: " << (a->username[40*m->userID]) << ". ID: " << m->userID << std::endl; // test of username
+            // std::cout << buffer << " by username: " << (a->username[40*m->userID]) << ". ID: " << m->userID << std::endl; // test of username
 
             memcpy(m->text, buffer, sizeof(m->text));
             for(i=0; i<a->num_users; i++)
@@ -270,7 +272,7 @@ void *send_results(void *args)
         sleep(1);
 
         // should we add the time?
-        if (count++ % 10 == 0)  // NUMBER OF SECONDS
+        if (count++ % 60 == 0)  // NUMBER OF SECONDS
         {
             timestamp = time(NULL);
             datetime = *localtime(&timestamp);
@@ -285,7 +287,7 @@ void *send_results(void *args)
 
             if (comm.userID == a->userID)
             {
-                strcat(msg, "[Você]: ");
+                strcat(msg, "[You]: ");
             }
             else
             {
