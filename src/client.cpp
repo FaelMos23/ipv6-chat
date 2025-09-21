@@ -17,13 +17,25 @@ typedef struct Arguments
 void *send_message(void *); // thread1
 void *get_message(void *);  // thread2
 
-int main()
+int main(int argc, char* argv[])
 {
+
+    if(argc < 2)
+    {
+        std::cout << "Use of client: \'./client <IP_ADDRESS>\'\n" << std::endl;
+        return 1;
+    }
+
     // variables
     bool loopON = true;
 
     // creating socket
     int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if(clientSocket < 0)
+    {
+        perror("Socket error");
+        return 1;
+    }
 
     // specifing args for threads
     arg *a = (arg *)malloc(sizeof(arg));
@@ -34,7 +46,7 @@ int main()
     sockaddr_in serverAddress;
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_port = htons(28657);
-    if (inet_pton(AF_INET, "10.0.2.4", &serverAddress.sin_addr) <= 0)
+    if (inet_pton(AF_INET, argv[1], &serverAddress.sin_addr) <= 0)
     {
         std::cerr << "Invalid address\n";
     }
@@ -45,8 +57,12 @@ int main()
     getline(std::cin, username);
 
     // sending connection request
-    connect(clientSocket, (struct sockaddr *)&serverAddress, sizeof(serverAddress));
-    // TODO: treat connection error
+    int connect_result = connect(clientSocket, (struct sockaddr *)&serverAddress, sizeof(serverAddress));
+    if(connect_result <0)
+    {
+        perror("Connect error");
+        return 1;
+    }
 
     // sending name
     if (username.empty())
@@ -69,10 +85,12 @@ int main()
     pthread_join(msg_in, NULL);
     pthread_join(msg_out, NULL);
 
+    free(a);
+
     // closing socket
     close(clientSocket);
 
-    std::cout << "\nConexão finalizada!\n"
+    std::cout << "\nConnection ended!\n"
               << std::endl;
 
     return 0;
@@ -87,7 +105,12 @@ void *send_message(void *args)
     {
         getline(std::cin, message);
         std::cout << "\033[A\33[2K"; // erase line that was just typed
-        send(a->clientSocket, message.c_str(), message.size(), 0);
+        int send_result = send(a->clientSocket, message.c_str(), message.size(), 0);
+        if(send_result <0)
+        {
+            perror("Send error");
+            return a;
+        }
 
         if (!strcmp(message.c_str(), ":quit"))
         {
@@ -105,7 +128,19 @@ void *get_message(void *args)
 
     while (*a->loopON)
     {
-        recv(a->clientSocket, buffer, sizeof(buffer), 0);
+        int recv_result = recv(a->clientSocket, buffer, sizeof(buffer), 0);
+        if (recv_result < 0) {
+            perror("Recv error");
+            *a->loopON = false;
+            break;
+        }
+        if (recv_result == 0) {
+            std::cout << "Server closed the connection." << std::endl;
+            *a->loopON = false;
+            break;
+        }
+        buffer[recv_result] = '\0';
+        
         std::cout << buffer << std::endl;
     }
 
